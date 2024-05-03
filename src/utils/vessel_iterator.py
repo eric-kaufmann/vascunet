@@ -9,15 +9,18 @@ class VesselIterator:
     def __iter__(self):
         return self
     
+    def __getitem__(self, index):
+        vessel_file = self.vessel_files[index]
+        return self._file_to_datadict(vessel_file)
+    
+    def __len__(self):
+        return len(self.vessel_files)
+    
     def __next__(self):
         if self.index < len(self.vessel_files):
             vessel_file = self.vessel_files[self.index]
             self.index += 1
-            data = meshio.read(vessel_file)
-            data_dict = data.point_data
-            data_dict["points"] = data.points
-            data_dict["filename"] = vessel_file
-            return vessel_file
+            return self._file_to_datadict(vessel_file)
         else:
             raise StopIteration
     
@@ -28,3 +31,10 @@ class VesselIterator:
                 file_path = os.path.join(directory, filename)
                 vessel_files.append(file_path)
         return vessel_files
+    
+    def _file_to_datadict(self, filename):
+        data = meshio.read(filename)
+        data_dict = data.point_data
+        data_dict["points"] = data.points
+        data_dict["filename"] = filename
+        return data_dict
