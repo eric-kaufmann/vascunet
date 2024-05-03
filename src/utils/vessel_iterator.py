@@ -26,15 +26,21 @@ class VesselIterator:
     
     def _get_vessel_files(self, directory):
         vessel_files = []
-        for filename in os.listdir(directory):
-            if filename.endswith(".vtu"):
-                file_path = os.path.join(directory, filename)
-                vessel_files.append(file_path)
+        for fluid_filename in os.listdir(directory):
+            if fluid_filename.endswith('fluid.vtu'):
+                fluid_file_path = os.path.join(directory, fluid_filename)
+                mesh_file_path = os.path.join(directory, fluid_file_path.replace('fluid.vtu', 'wss.vtu'))
+                vessel_files.append({'fluid_file': fluid_file_path, 'mesh_file': mesh_file_path})
         return vessel_files
     
     def _file_to_datadict(self, filename):
-        data = meshio.read(filename)
-        data_dict = data.point_data
-        data_dict["points"] = data.points
-        data_dict["filename"] = filename
+        
+        fluid_data = meshio.read(filename['fluid_file'])
+        mesh_data = meshio.read(filename['mesh_file'])
+
+        data_dict = fluid_data.point_data
+        data_dict['fluid_file_path'] = filename['fluid_file']
+        data_dict['mesh_file_path'] = filename['mesh_file']
+        data_dict['data_points'] = fluid_data.points
+        data_dict['mesh_points'] = mesh_data.points
         return data_dict
