@@ -4,7 +4,7 @@
 The VascuNet project aims to develop a neural network model capable of analyzing the mesh representation of a vessel and generating blood flow-specific properties for that vessel. These properties may include but are not limited to flow rate, velocity profile, pressure distribution, and shear stress.
 
 ## Project Status
-At its current stage, the project is in its infancy. Research and development are ongoing to establish the foundational framework for the BFNN. This involves data collection, preprocessing, model architecture design, and initial testing.
+At its current stage, the project is in its infancy. Research and development are ongoing to establish the foundational framework for the VascuNet. This involves data collection, preprocessing, model architecture design, and initial testing.
 
 ## Key Objectives
 Data Collection: Gather diverse and representative datasets of vessel meshes and corresponding blood flow properties.
