@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 
 def get_project_root() -> Path:
-    return Path(__file__).parent.parent
+    return Path(__file__).parent.parent.parent
 
 def pick_n_random_indices(arr, n):
     """
