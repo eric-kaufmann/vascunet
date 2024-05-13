@@ -33,14 +33,3 @@ class VesselDataset(Dataset):
         )
 
         return data.T, label
-
-if __name__ == "__main__":
-    DATA_DIR = Path(r"C:\Users\Eric Kaufmann\workspace\MA\data\carotid_flow_database")
-    freeze_support()
-    dataset = VesselDataset(DATA_DIR)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
-    for i, batch in enumerate(dataloader):
-        #print(f"Batch {i}: {batch.shape}")
-        print(batch[0].shape, batch[1].shape)
-        if i == 0:
-            break
