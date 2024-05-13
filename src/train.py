@@ -1,11 +1,11 @@
 import lightning as L
 from pathlib import Path
-
+from utils.helper_functions import get_project_root
 from vessel_dataloader import VesselDataset
 from model import VesselModel
 from torch.utils.data import Dataset, DataLoader
 
-DATA_DIR = Path(r"C:\Users\Eric Kaufmann\workspace\MA\data\carotid_flow_database")
+DATA_DIR = get_project_root() / "data" / "carotid_flow_database"
 BATCH_SIZE = 8
 
 def main():

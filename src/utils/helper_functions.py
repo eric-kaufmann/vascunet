@@ -1,6 +1,8 @@
 import numpy as np
+from pathlib import Path
 
-import numpy as np
+def get_project_root() -> Path:
+    return Path(__file__).parent.parent
 
 def pick_n_random_indices(arr, n):
     """
