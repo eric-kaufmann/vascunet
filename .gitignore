@@ -28,3 +28,6 @@ ENV/
 *.log
 *.sqlite3
 lightning_logs/
+
+# Data
+data/
