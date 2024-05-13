@@ -11,7 +11,7 @@ BATCH_SIZE = 8
 def main():
 
     dataset = VesselDataset(DATA_DIR)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, persistent_workers=True)
     model = VesselModel()
 
     trainer = L.Trainer(max_epochs=5, limit_train_batches=200)
