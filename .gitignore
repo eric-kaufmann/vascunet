@@ -31,3 +31,6 @@ lightning_logs/
 
 # Data
 data/
+
+# Outoupts
+output/
