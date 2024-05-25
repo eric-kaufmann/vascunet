@@ -3,7 +3,7 @@
 #SBATCH --output=./output/train_%j.out
 #SBATCH --error=./output/train_%j.err
 #SBATCH --ntasks=1
-#SBATCH --time=5:30:00
+#SBATCH --time=2:30:00
 #SBATCH --mail-user=eric.kaufmann@uni-jena.de
 #SBATCH --mail-type=ALL
 #SBATCH --partition=vis

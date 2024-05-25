@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import Dataset
 import os
 import meshio
-
+import numpy as np
 
 class VesselDataset(Dataset):
     """
@@ -29,16 +29,24 @@ class VesselDataset(Dataset):
     - _get_vessel_files(): Retrieves the vessel files from the given directory.
     """
 
-    def __init__(self, data_path, num_random_mesh_iterations=10_000, num_fluid_samples=50_000, num_meshpoints=8192, seed=None):
+    def __init__(self, data_path, num_random_mesh_iterations=10_000, num_fluid_samples=50_000, num_meshpoints=8192, seed=None, shuffle=False, validation=False, train_val_split=0.8):
         if seed is not None:
             torch.manual_seed(seed)
+            np.random.seed(seed)
         else:
             torch.seed()
+            np.random.seed()
+            
         self.data_path = data_path
         self.samples_per_vessel = num_random_mesh_iterations
-        self.vessel_files = self._get_vessel_files()
+        vessel_files = self._get_vessel_files(shuffle)
+        if validation:
+            self.vessel_files = vessel_files[int(len(vessel_files)*train_val_split):]
+        else: 
+            self.vessel_files = vessel_files[:int(len(vessel_files)*train_val_split)]
         self.num_meshpoints = num_meshpoints
         self.num_fluid_samples = num_fluid_samples
+        #self.shuffle = shuffle
     
         self.current_vessel = 0
         self.current_vessel_mesh_tensor = self._update_vessel_mesh_tensor(0)
@@ -66,7 +74,7 @@ class VesselDataset(Dataset):
             'sys_vel_tensor': self.current_vessel_sys_vel_tensor[fluid_idx],
         }    
         
-        return return_dict#self.current_vessel_mesh_tensor[sample_idx], self.current_vessel_sys_vel_tensor
+        return return_dict
     
     def _update_vessel_mesh_tensor(self, vessel_idx):
         """
@@ -81,6 +89,7 @@ class VesselDataset(Dataset):
         vessel = self.vessel_files[vessel_idx]
         mesh_data = meshio.read(vessel['mesh'])
         mesh_tensor = torch.Tensor(mesh_data.points)
+        mesh_tensor = (mesh_tensor - mesh_tensor.min()) / (mesh_tensor.max() - mesh_tensor.min())
         random_sample_idx = torch.randint(0, mesh_tensor.shape[0], (self.samples_per_vessel,self.num_meshpoints))
         return mesh_tensor[random_sample_idx]
     
@@ -97,6 +106,7 @@ class VesselDataset(Dataset):
         vessel = self.vessel_files[vessel_idx]
         fluid_data = meshio.read(vessel['fluid'])
         fluid_points = torch.Tensor(fluid_data.points)
+        fluid_points = (fluid_points - fluid_points.min()) / (fluid_points.max() - fluid_points.min())
         return fluid_points
     
     def _update_vessel_sys_vel_tensor(self, vessel_idx):
@@ -112,9 +122,10 @@ class VesselDataset(Dataset):
         vessel = self.vessel_files[vessel_idx]
         fluid_data = meshio.read(vessel['fluid'])
         sys_vel = torch.Tensor(fluid_data.point_data['velocity_systolic'])
+        sys_vel = (sys_vel - sys_vel.min()) / (sys_vel.max() - sys_vel.min())
         return sys_vel
     
-    def _get_vessel_files(self):
+    def _get_vessel_files(self, shuffle):
         """
         Retrieves the vessel files from the given directory.
 
@@ -130,5 +141,10 @@ class VesselDataset(Dataset):
                     'fluid': fluid_file_path,
                     'mesh': mesh_file_path
                 })
+        vessel_files = np.array(vessel_files)
+        
+        if shuffle:
+            np.random.shuffle(vessel_files)
+            
         return vessel_files
         

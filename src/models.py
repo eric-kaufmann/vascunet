@@ -17,6 +17,7 @@ class NSModel(nn.Module):
         self.linear5 = nn.Linear(64, 32)
         self.relu5 = nn.ReLU()
         self.linear6 = nn.Linear(32, 16)
+        self.dropout = nn.Dropout(0.2)
         self.relu6 = nn.ReLU()
         self.linear7 = nn.Linear(16, out_features)
 
@@ -33,6 +34,7 @@ class NSModel(nn.Module):
         x = self.linear5(x)
         x = self.relu5(x)
         x = self.linear6(x)
+        x = self.dropout(x)
         x = self.relu6(x)
         x = self.linear7(x)
         return x
