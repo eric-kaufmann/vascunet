@@ -9,12 +9,38 @@ from lightning.pytorch.callbacks import TQDMProgressBar
 import utils.helper_functions as hf
 from vessel_dataloader import VesselDataset
 from models import NSModel, VesselGeomEmbedding
+import argparse
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Training script')
+    parser.add_argument('--num_random_mesh_iterations', type=int, default=1, help='Number of random mesh iterations')
+    parser.add_argument('--num_fluid_samples', type=int, default=20000, help='Number of fluid samples')
+    parser.add_argument('--num_meshpoints', type=int, default=8192, help='Number of mesh points')
+    parser.add_argument('--seed', type=int, default=666, help='Random seed')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--train_val_split', type=float, default=0.8, help='Train validation split')
+    parser.add_argument('--num_neighbours', type=int, default=32, help='Number of neighbors')
+    parser.add_argument('--num_midpoints', type=int, default=32, help='Number of midpoints')
+    parser.add_argument('--num_epochs', type=int, default=15, help='Number of epochs')
+    args = parser.parse_args()
+    return args
 
+args = parse_arguments()
+
+BATCH_SIZE = args.batch_size
+LEARNING_RATE = args.learning_rate
+TRAIN_VAL_SPLIT = args.train_val_split
+NUM_NEIGHBOURS = args.num_neighbours
+NUM_MIDPOINTS = args.num_midpoints
+NUM_EPOCHS = args.num_epochs
 DATA_DIR = hf.get_project_root() / "data" / "carotid_flow_database"
-BATCH_SIZE = 64
-LEARNING_RATE = 1e-6
-TRAIN_VAL_SPLIT = 0.8
+NUM_RANDOM_MESH_ITERATIONS = args.num_random_mesh_iterations
+NUM_FLUID_SAMPLES = args.num_fluid_samples
+NUM_MESHPOINTS = args.num_meshpoints
+SEED = args.seed
+
+
 
 class VesselModel(L.LightningModule):
     def __init__(self, ns_model, vessel_geom_embedding_model, num_neighbours=32, num_midpoints=32, learning_rate=1e-3):
@@ -94,20 +120,13 @@ class VesselModel(L.LightningModule):
 
 def main():
     torch.set_float32_matmul_precision('medium')
-    
-    num_random_mesh_iterations=1
-    num_fluid_samples=20_000
-    num_meshpoints=8192
-    seed=666
-    num_midpoints=32
-    num_neighbours=32
 
     dataset = VesselDataset(
         DATA_DIR, 
-        num_random_mesh_iterations=num_random_mesh_iterations, 
-        num_fluid_samples=num_fluid_samples, 
-        num_meshpoints=num_meshpoints, 
-        seed=seed,
+        num_random_mesh_iterations=NUM_RANDOM_MESH_ITERATIONS, 
+        num_fluid_samples=NUM_FLUID_SAMPLES, 
+        num_meshpoints=NUM_MESHPOINTS, 
+        seed=SEED,
         shuffle=True,
         validation=False,
         train_val_split=TRAIN_VAL_SPLIT
@@ -115,10 +134,10 @@ def main():
     
     val_dataset = VesselDataset(
         DATA_DIR, 
-        num_random_mesh_iterations=num_random_mesh_iterations, 
-        num_fluid_samples=num_fluid_samples, 
-        num_meshpoints=num_meshpoints, 
-        seed=seed,
+        num_random_mesh_iterations=NUM_RANDOM_MESH_ITERATIONS, 
+        num_fluid_samples=NUM_FLUID_SAMPLES, 
+        num_meshpoints=NUM_MESHPOINTS, 
+        seed=SEED,
         shuffle=True,
         validation=True,
         train_val_split=TRAIN_VAL_SPLIT
@@ -143,7 +162,7 @@ def main():
     
     
     vessel_geom_embedding_model = VesselGeomEmbedding(
-        in_features=num_midpoints*num_neighbours*3, 
+        in_features=NUM_MIDPOINTS*NUM_NEIGHBOURS*3, 
         out_features=256
     )
     
@@ -152,7 +171,7 @@ def main():
         out_features=3
     )
     
-    model = VesselModel(ns_model, vessel_geom_embedding_model, num_neighbours=num_neighbours, num_midpoints=num_midpoints, )
+    model = VesselModel(ns_model, vessel_geom_embedding_model, num_neighbours=NUM_NEIGHBOURS, num_midpoints=NUM_MIDPOINTS, learning_rate=LEARNING_RATE)
     
     logger = TensorBoardLogger("./lightning_logs", name="train")
 
@@ -163,17 +182,17 @@ def main():
     print("data_dir", DATA_DIR)
     print("batch_size", BATCH_SIZE)
     print("learning_rate", LEARNING_RATE)
-    print("random_mesh_iterations", num_random_mesh_iterations)
-    print("num_fluid_samples", num_fluid_samples)
-    print("num_meshpoints", num_meshpoints)
-    print("seed", seed)
-    print("num_midpoints", num_midpoints)
-    print("num_neighbours", num_neighbours)
+    print("random_mesh_iterations", NUM_RANDOM_MESH_ITERATIONS)
+    print("num_fluid_samples", NUM_FLUID_SAMPLES)
+    print("num_meshpoints", NUM_MESHPOINTS)
+    print("seed", SEED)
+    print("num_midpoints", NUM_MIDPOINTS)
+    print("num_neighbours", NUM_NEIGHBOURS)
     print("tensorboard_logger dir", logger.log_dir)
     print("##################################") 
     
     trainer = L.Trainer(
-        max_epochs=15, 
+        max_epochs=NUM_EPOCHS, 
         logger=logger, 
         log_every_n_steps=500,
         callbacks=[TQDMProgressBar(refresh_rate=2000)]
