@@ -23,6 +23,7 @@ def parse_arguments():
     parser.add_argument('--num_neighbours', type=int, default=32, help='Number of neighbors')
     parser.add_argument('--num_midpoints', type=int, default=32, help='Number of midpoints')
     parser.add_argument('--num_epochs', type=int, default=15, help='Number of epochs')
+    parser.add_argument('--save_model', type=bool, default=True, help='Whether to save the model or not')
     args = parser.parse_args()
     return args
 
@@ -35,10 +36,12 @@ NUM_NEIGHBOURS = args.num_neighbours
 NUM_MIDPOINTS = args.num_midpoints
 NUM_EPOCHS = args.num_epochs
 DATA_DIR = hf.get_project_root() / "data" / "carotid_flow_database"
+MODEL_DIR = hf.get_project_root() / "saved_models"
 NUM_RANDOM_MESH_ITERATIONS = args.num_random_mesh_iterations
 NUM_FLUID_SAMPLES = args.num_fluid_samples
 NUM_MESHPOINTS = args.num_meshpoints
 SEED = args.seed
+SAVE = args.save_model
 
 
 
@@ -198,6 +201,10 @@ def main():
         callbacks=[TQDMProgressBar(refresh_rate=2000)]
     )
     trainer.fit(model=model, train_dataloaders=dataloader, val_dataloaders=val_dataloader)
+    
+    if SAVE:
+        version_name = f"version_{trainer.logger.version}"
+        torch.save(model.state_dict(), MODEL_DIR / version_name)
 
 
 if __name__ == "__main__":
