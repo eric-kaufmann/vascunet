@@ -2,59 +2,159 @@ import lightning as L
 import torch
 from torch import optim, nn
 
-class NSModel(nn.Module):
-    def __init__(self, in_features=256+3, out_features=3):
-        super(NSModel, self).__init__()
-        self.flatten = nn.Flatten()
-        self.linear1 = nn.Linear(in_features, 256)
-        self.relu1 = nn.ReLU()
-        self.linear2 = nn.Linear(256, 256)
-        self.relu2 = nn.ReLU()
-        self.linear3 = nn.Linear(256, 128)
-        self.relu3 = nn.ReLU()
-        self.linear4 = nn.Linear(128, 64)
-        self.relu4 = nn.ReLU()
-        self.linear5 = nn.Linear(64, 32)
-        self.relu5 = nn.ReLU()
-        self.linear6 = nn.Linear(32, 16)
-        self.dropout = nn.Dropout(0.2)
-        self.relu6 = nn.ReLU()
-        self.linear7 = nn.Linear(16, out_features)
+class VesselModel1(L.LightningModule):
+    def __init__(self, learning_rate=1e-3, in_features=2**14, out_features=2**14, batch_size=2):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(in_features*3, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Linear(512, out_features*3),
+        )
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.out_features = out_features
 
-    def forward(self, x):
-        x = self.flatten(x)
-        x = self.linear1(x)
-        x = self.relu1(x)
-        x = self.linear2(x)
-        x = self.relu2(x)
-        x = self.linear3(x)
-        x = self.relu3(x)
-        x = self.linear4(x)
-        x = self.relu4(x)
-        x = self.linear5(x)
-        x = self.relu5(x)
-        x = self.linear6(x)
-        x = self.dropout(x)
-        x = self.relu6(x)
-        x = self.linear7(x)
-        return x
-
-class VesselGeomEmbedding(nn.Module):
-    def __init__(self, in_features=8192*3, out_features=256):
-        super(VesselGeomEmbedding, self).__init__()
-        self.flatten = nn.Flatten()
-        self.linear1 = nn.Linear(in_features, 2048)
-        self.relu1 = nn.ReLU()
-        self.linear2 = nn.Linear(2048, 1024)
-        self.relu2 = nn.ReLU()
-        self.linear3 = nn.Linear(1024, out_features)
+    def training_step(self, batch, batch_idx): 
+        points, sys_vel = batch      
+        pred = self.model(points)
+        pred = pred.reshape(sys_vel.shape)
+        #loss = nn.functional.mse_loss(pred, sys_vel)
+        loss = torch.sum(torch.abs(pred - sys_vel))
+        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=self.batch_size)
+        return loss    
         
-    def forward(self, x):
-        x = self.flatten(x)
-        x = self.linear1(x)
-        x = self.relu1(x)
-        x = self.linear2(x)
-        x = self.relu2(x)
-        x = self.linear3(x)
-        return x
+    def validation_step(self, batch, batch_idx):
+        points, sys_vel = batch
+        pred = self.model(points)
+        pred = pred.reshape(sys_vel.shape)
+        #loss = nn.functional.mse_loss(pred, sys_vel)
+        loss = torch.sum(torch.abs(pred - sys_vel))
+        self.log("val_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=self.batch_size)
+        return loss
 
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        return optimizer
+    
+    def forward(self, x):
+        x = torch.stack([x])
+        x = self.model(x)
+        x = x.reshape((self.out_features, 3))
+        return x.detach()
+
+
+class VesselModel2(L.LightningModule):
+    def __init__(self, learning_rate=1e-3, in_features=2**14, out_features=2**14, batch_size=2):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(in_features*3, 2**10),
+            nn.Tanh(),
+            nn.Linear(2**10, 2**10),
+            nn.Tanh(),
+            nn.Linear(2**10, 2**10),
+            nn.Tanh(),
+            nn.Linear(2**10, 2**10),
+            nn.Tanh(),
+            nn.Linear(2**10, out_features*3),
+        )
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.out_features = out_features
+
+    def training_step(self, batch, batch_idx): 
+        points, sys_vel = batch      
+        pred = self.model(points)
+        pred = pred.reshape(sys_vel.shape)
+        loss = nn.functional.mse_loss(pred, sys_vel)
+        #loss = torch.sum(torch.abs(pred - sys_vel))
+        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=self.batch_size)
+        return loss    
+        
+    def validation_step(self, batch, batch_idx):
+        points, sys_vel = batch
+        pred = self.model(points)
+        pred = pred.reshape(sys_vel.shape)
+        loss = nn.functional.mse_loss(pred, sys_vel)
+        #loss = torch.sum(torch.abs(pred - sys_vel))
+        self.log("val_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=self.batch_size)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        return optimizer
+    
+    def forward(self, x):
+        x = torch.stack([x])
+        x = self.model(x)
+        x = x.reshape((self.out_features, 3))
+        return x.detach()
+    
+    
+class VesselModelSinlgePoint1(L.LightningModule):
+    def __init__(self, learning_rate=1025, in_features=3, out_features=2**14, batch_size=2):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(in_features*3, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Linear(16, 8),
+            nn.ReLU(),
+            nn.Linear(8, out_features),
+        )
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.out_features = out_features
+
+    def training_step(self, batch, batch_idx): 
+        mesh_points = batch['mesh_tensor']
+        fluid_points = batch['fluid_points']
+        sys_vel = batch['sys_vel_tensor']
+
+        input_tensor = torch.concatenate((fluid_points.reshape(-1, 1, 3), mesh_points), dim=1) 
+        pred = self.model(input_tensor)
+        loss = nn.functional.mse_loss(pred, sys_vel)
+        #loss = torch.sum(torch.abs(pred - sys_vel))
+        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=self.batch_size)
+        return loss    
+        
+    def validation_step(self, batch, batch_idx):
+        mesh_points = batch['mesh_tensor']
+        fluid_points = batch['fluid_points']
+        sys_vel = batch['sys_vel_tensor']
+
+        input_tensor = torch.concatenate((fluid_points.reshape(-1, 1, 3), mesh_points), dim=1) 
+        pred = self.model(input_tensor)
+        loss = nn.functional.mse_loss(pred, sys_vel)
+        #loss = torch.sum(torch.abs(pred - sys_vel))
+        self.log("val_loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=self.batch_size)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        return optimizer
+    
+    def forward(self, x):
+        x = torch.stack([x])
+        x = self.model(x)
+        x = x.reshape((self.out_features, 3))
+        return x.detach()
