@@ -11,5 +11,5 @@ PROJECT_DIR=$HOME/workspace/vascunet
 
 source $PROJECT_DIR/.venv/bin/activate
 
-python $PROJECT_DIR/src/train2.py --seed 666 --batch_size 2 --learning_rate 1e-3 --num_points 1024 --num_epochs 30 --model VesselModelSinglePoint2 --dataset VesselDatasetSinglePoint
+python $PROJECT_DIR/src/train2.py --seed 666 --batch_size 1 --learning_rate 1e-3 --num_points 2048 --num_epochs 50 --model VesselAutoencoder --dataset VesselAutoencoderDataset
  
