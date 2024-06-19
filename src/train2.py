@@ -7,8 +7,8 @@ from lightning.pytorch.callbacks import TQDMProgressBar
 
 
 import utils.helper_functions as hf
-from vessel_dataloader import VesselDataset1, VesselDatasetSinglePoint
-from models import VesselModel1, VesselModel2, VesselModelSinlgePoint1
+from vessel_dataloader import VesselAutoencoderDataset, VesselDatasetSinglePoint
+from models import VesselAutoencoder, VesselModel2, VesselModelSinlgePoint1, VesselModelSinlgePoint2
 import argparse
 
 def parse_arguments():
@@ -40,8 +40,8 @@ VESSEL_DATASET = args.dataset
 def main():
     torch.set_float32_matmul_precision('medium')
     
-    if VESSEL_DATASET == 'VesselDataset1':
-        dataset = VesselDataset1(
+    if VESSEL_DATASET == 'VesselAutoencoderDataset':
+        dataset = VesselAutoencoderDataset(
             DATA_DIR, 
             num_points=NUM_POINTS,
             seed=SEED,
@@ -82,12 +82,14 @@ def main():
     
     
     ## Define model
-    if VESSEL_MODEL == 'VesselModel1':
-        model = VesselModel1(learning_rate=LEARNING_RATE, in_features=NUM_POINTS, out_features=NUM_POINTS, batch_size=BATCH_SIZE)
+    if VESSEL_MODEL == 'VesselAutoencoder':
+        model = VesselAutoencoder(learning_rate=LEARNING_RATE, in_features=NUM_POINTS, out_features=NUM_POINTS, batch_size=BATCH_SIZE)
     elif VESSEL_MODEL == 'VesselModel2':
         model = VesselModel2(learning_rate=LEARNING_RATE, in_features=NUM_POINTS, out_features=NUM_POINTS, batch_size=BATCH_SIZE)
     elif VESSEL_MODEL == 'VesselModelSinglePoint1':
         model = VesselModelSinlgePoint1(learning_rate=LEARNING_RATE, in_features=4_096+1, out_features=3, batch_size=BATCH_SIZE)
+    elif VESSEL_MODEL == 'VesselModelSinglePoint2':
+        model = VesselModelSinlgePoint2(learning_rate=LEARNING_RATE, in_features=4_096, out_features=3, batch_size=BATCH_SIZE)
     else:
         raise ValueError("Model not found")
     
@@ -109,8 +111,8 @@ def main():
     trainer = L.Trainer(
         max_epochs=NUM_EPOCHS, 
         logger=logger, 
-        log_every_n_steps=500,
-        callbacks=[TQDMProgressBar(refresh_rate=500)]
+        log_every_n_steps=20,
+        callbacks=[TQDMProgressBar(refresh_rate=20)]
     )
     trainer.fit(model=model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
     

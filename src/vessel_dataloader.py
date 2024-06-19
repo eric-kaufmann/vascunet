@@ -89,9 +89,8 @@ class VesselDatasetSinglePoint(Dataset):
         return tensor
         
 
-class VesselDataset1(Dataset):
-
-    def __init__(self, data_path, num_points=10_000, seed=None, apply_transformation=True):
+class VesselAutoencoderDataset(Dataset):
+    def __init__(self, data_path, num_points=10_000, seed=None, apply_transformation=True, apply_point_restrictions=True):
         if seed is not None:
             torch.manual_seed(seed)
             np.random.seed(seed)
@@ -100,6 +99,7 @@ class VesselDataset1(Dataset):
             np.random.seed()
             
         self.data_path = data_path
+        self.apply_point_restrictions = apply_point_restrictions
         self.num_points = num_points
         self.vessel_files = self._get_vessel_files()
         self.apply_transformation = apply_transformation
@@ -138,7 +138,11 @@ class VesselDataset1(Dataset):
     def _point_data_generator(self, vessel_file:dict):
         mesh_data = meshio.read(vessel_file['mesh'])
         fluid_data = meshio.read(vessel_file['fluid'])
-        idx = np.random.choice(np.arange(fluid_data.points.shape[0]), self.num_points, replace=False)
+        len_data = fluid_data.points.shape[0] + mesh_data.points.shape[0]
+        if self.apply_point_restrictions:
+            idx = np.random.choice(np.arange(len_data), self.num_points, replace=False)
+        else:
+            idx = np.arange(len_data)
         return (
             torch.concat([torch.Tensor(fluid_data.points), torch.Tensor(mesh_data.points)], axis=0)[idx],
             torch.concat([torch.Tensor(fluid_data.point_data['velocity_systolic']), torch.zeros(mesh_data.points.shape)], axis=0)[idx]
