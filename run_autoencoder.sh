@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=train
-#SBATCH --output=./output/train2_%j.out
-#SBATCH --error=./output/train2_%j.err
+#SBATCH --output=./output/train3_%j.out
+#SBATCH --error=./output/train3_%j.err
 #SBATCH --ntasks=1
 #SBATCH --time=10:00:00
 #SBATCH --partition=vis
