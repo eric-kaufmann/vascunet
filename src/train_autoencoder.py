@@ -60,8 +60,8 @@ class VesselGrid(Dataset):
     def __getitem__(self, idx):
         data = np.load(self.file_paths[idx])
         vessel_mask = torch.from_numpy(data['vessel_mask']).float()
-        interpolated_velocities = torch.from_numpy(data['interpolated_velocities']).float()
-        return vessel_mask.unsqueeze(0), interpolated_velocities.reshape(3, 64, 64, 64)
+        interpolated_velocities = torch.from_numpy(data['interpolated_velocities']).float().permute(3, 0, 1, 2)
+        return vessel_mask.unsqueeze(0), interpolated_velocities
 
 
 class VAE(pl.LightningModule):
@@ -172,6 +172,14 @@ class VAE(pl.LightningModule):
     
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=1e-3)
+    
+    @staticmethod
+    def load_from_checkpoint(checkpoint_path, encoder, decoder, after_cond_encoder, pre_cond_decoder, batch_size=1):
+        # Modify this method if necessary to load additional components
+        # or handle the instantiation logic specific to your checkpoint structure
+        model = VAE(encoder, decoder, after_cond_encoder, pre_cond_decoder, batch_size)  # Adjust this call as needed
+        # Load the checkpoint and restore state
+        return model
     
     
 encoder = nn.Sequential(
