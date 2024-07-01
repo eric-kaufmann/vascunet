@@ -1,6 +1,8 @@
 import numpy as np
 from pathlib import Path
 import torch
+import numpy as np
+from scipy.interpolate import griddata
 
 def square_distance(src, dst):
     """
@@ -114,3 +116,48 @@ def move_and_rescale_matrix(matrix):
     matrix /= max_vals
 
     return matrix
+
+
+def interpolate_vectors_to_grid(points, velocities, grid_shape, method='linear'):
+    """
+    Interpolates velocity vectors at 3D points into a 3D grid of a predefined shape.
+
+    Parameters:
+    - points: A numpy array of shape (N, 3), where N is the number of points, representing the 3D coordinates.
+    - velocities: A numpy array of shape (N, 3), where N is the number of points, representing the velocity vectors at these points.
+    - grid_shape: A tuple of 3 integers defining the shape of the 3D grid (depth, height, width).
+    - method: Interpolation method. Options include 'linear', 'nearest', and 'cubic'.
+
+    Returns:
+    - A numpy array of shape (grid_shape[0], grid_shape[1], grid_shape[2], 3) representing the interpolated velocity vectors on the 3D grid.
+    """
+    
+    # Generate linearly spaced points for each axis based on the bounds and the desired shape
+    x = np.linspace(np.min(points[:,0]), np.max(points[:,0]), grid_shape[0])
+    y = np.linspace(np.min(points[:,1]), np.max(points[:,1]), grid_shape[1])
+    z = np.linspace(np.min(points[:,2]), np.max(points[:,2]), grid_shape[2])
+
+    # Create a 3D grid from the 1D arrays
+    grid_x, grid_y, grid_z = np.meshgrid(x, y, z, indexing='ij')
+    
+    # Interpolate the velocity vectors onto the grid
+    grid_vx = griddata(points, velocities[:,0], (grid_x, grid_y, grid_z), method=method, fill_value=0)
+    grid_vy = griddata(points, velocities[:,1], (grid_x, grid_y, grid_z), method=method, fill_value=0)
+    grid_vz = griddata(points, velocities[:,2], (grid_x, grid_y, grid_z), method=method, fill_value=0)
+    
+    # Combine the interpolated velocities into a single array
+    grid_velocities = np.stack((grid_vx, grid_vy, grid_vz), axis=-1)
+    
+    return grid_velocities
+
+def get_vessel_grid_data(batch, size=(64, 64, 64), method='linear', threashold=0.1):
+    points, velocities = batch
+    interpolated_velocities = interpolate_vectors_to_grid(
+        points.cpu().numpy(), 
+        velocities.cpu().numpy(), 
+        size, 
+        method=method
+    )
+    vessel_mask = np.sum(interpolated_velocities**2, axis=-1) > threashold
+    interpolated_velocities[vessel_mask == False] = 0
+    return torch.Tensor(vessel_mask), torch.Tensor(interpolated_velocities)
