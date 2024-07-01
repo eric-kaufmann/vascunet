@@ -1,16 +1,13 @@
 import torch
 import pytorch_lightning as pl
+import numpy as np
+from scipy.interpolate import griddata
+from torch.utils.data import DataLoader, Dataset
+import os
 
 import torch.nn as nn
 import torch.optim as optim
-
-import numpy as np
-from scipy.interpolate import griddata
-
-from vessel_dataloader import VesselAutoencoderDataset
 import utils.helper_functions as hf
-
-from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
 
@@ -46,6 +43,22 @@ def get_vessel_grid_data(batch, size=(64, 64, 64), method='linear', threashold=0
     vessel_mask = np.sum(interpolated_velocities**2, axis=-1) > threashold
     interpolated_velocities[vessel_mask == False] = 0
     return torch.Tensor(vessel_mask), torch.Tensor(interpolated_velocities)
+
+
+class VesselGrid(Dataset):
+    def __init__(self, folder_path):
+        super(VesselGrid, self).__init__()
+        self.file_paths = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.npz')]
+
+    def __len__(self):
+        return len(self.file_paths)
+
+    def __getitem__(self, idx):
+        data = np.load(self.file_paths[idx])
+        points = torch.from_numpy(data['points']).float()
+        velocities = torch.from_numpy(data['velocities']).float()
+        return points, velocities
+
 
 class VAE(pl.LightningModule):
     def __init__(self, encoder, decoder, after_cond_encoder, pre_cond_decoder, batch_size=1):
@@ -113,9 +126,8 @@ class VAE(pl.LightningModule):
         return z, mu, log_var
     
     def training_step(self, batch, batch_idx):
-        #x, y = batch
         
-        vessel_mask, interpolated_velocities = get_vessel_grid_data(batch, threashold=0.2, method='linear')
+        vessel_mask, interpolated_velocities = batch
         #x = x.view(x.size(0), -1)
         x_hat, mu, log_var = self(vessel_mask)
         
@@ -209,19 +221,10 @@ if __name__ == "__main__":
 
 
     DATA_DIR = hf.get_project_root() / "data" / "carotid_flow_database"
-
-    dataset = VesselAutoencoderDataset(
-        DATA_DIR, 
-        apply_point_restrictions=False
-    )
-
-    # dataloader = DataLoader(
-    #     dataset, 
-    #     batch_size=1, 
-    #     shuffle=False, 
-    #     num_workers=2, 
-    # )
+    SAVE_DIR = hf.get_project_root() / "data" / "grid_vessel_data"
     
+    dataset = VesselGrid(SAVE_DIR)
+
     # Split dataset into train and validation
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
