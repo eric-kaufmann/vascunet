@@ -153,8 +153,8 @@ def interpolate_vectors_to_grid(points, velocities, grid_shape, method='linear')
 def get_vessel_grid_data(batch, size=(64, 64, 64), method='linear', threashold=0.1):
     points, velocities = batch
     interpolated_velocities = interpolate_vectors_to_grid(
-        points.cpu().numpy(), 
-        velocities.cpu().numpy(), 
+        np.array(points), 
+        np.array(velocities), 
         size, 
         method=method
     )
