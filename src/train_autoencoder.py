@@ -1,5 +1,9 @@
+#!/home/ne34gux/workspace/vascunet/.venv/bin/python
+
 import torch
 import pytorch_lightning as pl
+from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import TQDMProgressBar
 import numpy as np
 from scipy.interpolate import griddata
 from torch.utils.data import DataLoader, Dataset
@@ -55,9 +59,9 @@ class VesselGrid(Dataset):
 
     def __getitem__(self, idx):
         data = np.load(self.file_paths[idx])
-        points = torch.from_numpy(data['points']).float()
-        velocities = torch.from_numpy(data['velocities']).float()
-        return points, velocities
+        vessel_mask = torch.from_numpy(data['vessel_mask']).float()
+        interpolated_velocities = torch.from_numpy(data['interpolated_velocities']).float()
+        return vessel_mask.unsqueeze(0), interpolated_velocities.reshape(3, 64, 64, 64)
 
 
 class VAE(pl.LightningModule):
@@ -78,39 +82,41 @@ class VAE(pl.LightningModule):
     def forward(self, input_tensor):
         
         x = input_tensor
-        print("input", x.shape)
+        #print("input", x.shape)
         
         # encoder
         x = encoder(x)
-        print("after encoder", x.shape)
+        #print("after encoder", x.shape)
         
         # add conditioning variables to feature vector
         conditioning_variables = torch.Tensor([])
+        conditioning_variables = conditioning_variables.to(input_tensor.device)
+
         x = torch.concat([self.flatten(input_tensor), conditioning_variables], axis=1)
-        print("after conditioning", x.shape)
+        #print("after conditioning", x.shape)
         
         # put new feature vector through the after_cond_encoder
         x = self.after_cond_encoder(x)
-        print("after conditioning encoder", x.shape)
+        #print("after conditioning encoder", x.shape)
         
         # reparameterize
         mu, log_var = torch.chunk(x, 2, dim=1)
         std = torch.exp(0.5 * log_var)
         eps = torch.randn_like(std)
         z = mu + eps * std
-        print("reparameterize", z.shape)
+        #print("reparameterize", z.shape)
 
         # add conditioning variables to z
         z = torch.concat([z, conditioning_variables], axis=1)
-        print("after conditioning2", z.shape)
+        #print("after conditioning2", z.shape)
         
         # put z through the pre_cond_decoder
         z = self.pre_cond_decoder(z)
-        print("after conditioning decoder", z.shape)
+        #print("after conditioning decoder", z.shape)
         
         # reshape z to block shape
         z = torch.reshape(z, (self.batch_size, 256, 8, 8, 8))
-        print("after reshaping", z.shape)
+        #print("after reshaping", z.shape)
         
         # put new block shaped z through the decoder
         z = F.interpolate(z, scale_factor=2, mode='trilinear', align_corners=False)
@@ -121,14 +127,13 @@ class VAE(pl.LightningModule):
         z = decoder[9:12](z)
         z = F.interpolate(z, scale_factor=2, mode='trilinear', align_corners=False)
         z = decoder[12:](z)
-        print("after decoder", z.shape)
+        #print("after decoder", z.shape)
 
         return z, mu, log_var
     
-    def training_step(self, batch, batch_idx):
-        
+    def training_step(self, batch, batch_idx):    
         vessel_mask, interpolated_velocities = batch
-        #x = x.view(x.size(0), -1)
+
         x_hat, mu, log_var = self(vessel_mask)
         
         # Compute reconstruction loss
@@ -140,10 +145,29 @@ class VAE(pl.LightningModule):
         # Total loss
         loss = recon_loss + kl_loss
         
-        self.log('train_loss', loss)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('recon_loss', recon_loss)
         self.log('kl_loss', kl_loss)
         
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        vessel_mask, interpolated_velocities = batch
+        x_hat, mu, log_var = self(vessel_mask)
+
+        # Compute reconstruction loss
+        recon_loss = self.loss_fn(x_hat, interpolated_velocities)
+
+        # Compute KL divergence loss
+        kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+
+        # Total loss
+        loss = recon_loss + kl_loss
+
+        self.log('val_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log('val_recon_loss', recon_loss)
+        self.log('val_kl_loss', kl_loss)
+
         return loss
     
     def configure_optimizers(self):
@@ -233,9 +257,17 @@ if __name__ == "__main__":
     # Create DataLoaders
     train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=2)
     val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
+    
+    logger = TensorBoardLogger("./lightning_logs", name="train3")
+    log_every = 20
 
     # Create a trainer
-    trainer = pl.Trainer(max_epochs=1)
+    trainer = pl.Trainer(
+        max_epochs=100, 
+        logger=logger, 
+        log_every_n_steps=log_every, 
+        callbacks=[TQDMProgressBar(refresh_rate=log_every)]
+    )
 
     # Train the VAE with the DataLoaders
     trainer.fit(vae, train_dataloader, val_dataloader)
