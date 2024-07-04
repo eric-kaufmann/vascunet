@@ -15,40 +15,6 @@ import utils.helper_functions as hf
 import torch.nn.functional as F
 
 
-def interpolate_vectors_to_grid(points, velocities, grid_shape, method='linear'):
-
-    # Generate linearly spaced points for each axis based on the bounds and the desired shape
-    x = np.linspace(np.min(points[:,0]), np.max(points[:,0]), grid_shape[0])
-    y = np.linspace(np.min(points[:,1]), np.max(points[:,1]), grid_shape[1])
-    z = np.linspace(np.min(points[:,2]), np.max(points[:,2]), grid_shape[2])
-
-    # Create a 3D grid from the 1D arrays
-    grid_x, grid_y, grid_z = np.meshgrid(x, y, z, indexing='ij')
-    
-    # Interpolate the velocity vectors onto the grid
-    grid_vx = griddata(points, velocities[:,0], (grid_x, grid_y, grid_z), method=method, fill_value=0)
-    grid_vy = griddata(points, velocities[:,1], (grid_x, grid_y, grid_z), method=method, fill_value=0)
-    grid_vz = griddata(points, velocities[:,2], (grid_x, grid_y, grid_z), method=method, fill_value=0)
-    
-    # Combine the interpolated velocities into a single array
-    grid_velocities = np.stack((grid_vx, grid_vy, grid_vz), axis=-1)
-    
-    return grid_velocities
-    
-    
-def get_vessel_grid_data(batch, size=(64, 64, 64), method='linear', threashold=0.1):
-    points, velocities = batch
-    interpolated_velocities = interpolate_vectors_to_grid(
-        points.cpu().numpy(), 
-        velocities.cpu().numpy(), 
-        size, 
-        method=method
-    )
-    vessel_mask = np.sum(interpolated_velocities**2, axis=-1) > threashold
-    interpolated_velocities[vessel_mask == False] = 0
-    return torch.Tensor(vessel_mask), torch.Tensor(interpolated_velocities)
-
-
 class VesselGrid(Dataset):
     def __init__(self, folder_path):
         super(VesselGrid, self).__init__()
@@ -89,10 +55,14 @@ class VAE(pl.LightningModule):
         #print("after encoder", x.shape)
         
         # add conditioning variables to feature vector
-        conditioning_variables = torch.Tensor([])
+        conditioning_variables = torch.Tensor([
+            # torch.min(input_tensor[:,], dim=1).values,
+            # torch.max(input_tensor, dim=1).values,
+            
+        ])
         conditioning_variables = conditioning_variables.to(input_tensor.device)
 
-        x = torch.concat([self.flatten(input_tensor), conditioning_variables], axis=1)
+        x = torch.concat([self.flatten(x), conditioning_variables], axis=1)
         #print("after conditioning", x.shape)
         
         # put new feature vector through the after_cond_encoder
@@ -134,7 +104,11 @@ class VAE(pl.LightningModule):
     def training_step(self, batch, batch_idx):    
         vessel_mask, interpolated_velocities = batch
 
+        #x_hat, mu, log_var = self(interpolated_velocities)
         x_hat, mu, log_var = self(vessel_mask)
+        
+        # Filter out the masked values
+        x_hat = x_hat * vessel_mask
         
         # Compute reconstruction loss
         recon_loss = self.loss_fn(x_hat, interpolated_velocities)
@@ -153,7 +127,11 @@ class VAE(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         vessel_mask, interpolated_velocities = batch
+        #x_hat, mu, log_var = self(interpolated_velocities)
         x_hat, mu, log_var = self(vessel_mask)
+        
+        # Filter out the masked values
+        x_hat = x_hat * vessel_mask
 
         # Compute reconstruction loss
         recon_loss = self.loss_fn(x_hat, interpolated_velocities)
@@ -171,7 +149,7 @@ class VAE(pl.LightningModule):
         return loss
     
     def configure_optimizers(self):
-        return optim.Adam(self.parameters(), lr=1e-3)
+        return optim.Adam(self.parameters(), lr=1e-5)
     
     @staticmethod
     def load_from_checkpoint(checkpoint_path, encoder, decoder, after_cond_encoder, pre_cond_decoder, batch_size=1):
@@ -179,6 +157,9 @@ class VAE(pl.LightningModule):
         # or handle the instantiation logic specific to your checkpoint structure
         model = VAE(encoder, decoder, after_cond_encoder, pre_cond_decoder, batch_size)  # Adjust this call as needed
         # Load the checkpoint and restore state
+        checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+        # Assuming the model's state_dict is stored with the key 'state_dict'
+        model.load_state_dict(checkpoint['state_dict'])
         return model
     
     
@@ -206,15 +187,19 @@ encoder = nn.Sequential(
     nn.BatchNorm3d(256),
 )
 
-conditioning_shape = (1, 256, 8, 8, 8)
-conditioning_input_shape = int(torch.Tensor(conditioning_shape[1:]).prod())
+# conditioning_shape = (1, 256, 8, 8, 8)
+# conditioning_input_shape = int(torch.Tensor(conditioning_shape[1:]).prod())
 
 conditioning = nn.Sequential(
-    nn.Linear(262144, 10),
+    nn.Linear(131072, 10),
+    #nn.Linear(5000, 500),
+    #nn.Linear(500, 10),
     nn.ReLU()
 )
 
 conditioning2 = nn.Sequential(
+    #nn.Linear(5, 500),
+    #nn.Linear(500, 5000),
     nn.Linear(5, 131072),
     nn.ReLU()
 )
@@ -267,11 +252,11 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
     
     logger = TensorBoardLogger("./lightning_logs", name="train3")
-    log_every = 20
+    log_every = 50
 
     # Create a trainer
     trainer = pl.Trainer(
-        max_epochs=100, 
+        max_epochs=2000, 
         logger=logger, 
         log_every_n_steps=log_every, 
         callbacks=[TQDMProgressBar(refresh_rate=log_every)]
