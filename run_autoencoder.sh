@@ -6,6 +6,7 @@
 #SBATCH --time=10:00:00
 #SBATCH --partition=vis
 #SBATCH --gres=gpu:1
+#SBATCH --mem=16G
 
 PROJECT_DIR=$HOME/workspace/vascunet
 
