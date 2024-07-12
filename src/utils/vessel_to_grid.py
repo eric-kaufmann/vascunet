@@ -7,7 +7,10 @@ import meshio
 #(batch, size=(64, 64, 64), method='linear', threashold=0.1)
 
 DATA_DIR = hf.get_project_root() / "data" / "carotid_flow_database"
-SAVE_DIR = hf.get_project_root() / "data" / "grid_vessel_data"
+SAVE_DIR = hf.get_project_root() / "data" / "grid_vessel_data128"
+
+THREASHOLD = 0
+SIZE = 128
 
 print("Loading vessel files...")
 vessel_files = []
@@ -34,26 +37,31 @@ for v_idx, v in enumerate(vessel_files):
     )
     
     # trasform data
-    points_min = data_points.min(dim=0, keepdim=True)[0]
-    points_max = data_points.max(dim=0, keepdim=True)[0]
-    data_points = (data_points - points_min) / (points_max - points_min)
+    data_points = hf.normalize_point_cloud(data_points, fix_resizing_factor=True)
 
     velocity_vectors = torch.concat(
         [torch.Tensor(fluid_data.point_data['velocity_systolic']), torch.zeros(mesh_data.points.shape)], 
         axis=0
     )
     
+    _ , out_points = hf.check_points_in_hull(data_points, torch.rand(300_000, 3))
+    
     vessel_mask, interpolated_velocities = hf.get_vessel_grid_data(
-        (data_points, velocity_vectors), 
-        size=(64, 64, 64), 
+        (torch.concat([data_points, out_points]), torch.concat([velocity_vectors, torch.zeros(out_points.shape)])), 
+        size=(SIZE, SIZE, SIZE), 
         method='linear', 
-        threashold=0.1
+        threashold=THREASHOLD
     )
     
     if not os.path.exists(SAVE_DIR):
         os.makedirs(SAVE_DIR)
         
-    np.savez(os.path.join(SAVE_DIR, f'vessel_{v_idx}.npz'), vessel_mask=vessel_mask, interpolated_velocities=interpolated_velocities)
+    np.savez(
+        os.path.join(SAVE_DIR, f'vessel_{v_idx}.npz'), 
+        vessel_mask=vessel_mask, 
+        interpolated_velocities=interpolated_velocities,
+        
+    )
     
     
 print("Processing complete.")
