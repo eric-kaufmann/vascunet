@@ -3,6 +3,7 @@ from pathlib import Path
 import torch
 import numpy as np
 from scipy.interpolate import griddata
+from scipy.spatial import ConvexHull, Delaunay
 
 def square_distance(src, dst):
     """
@@ -161,3 +162,43 @@ def get_vessel_grid_data(batch, size=(64, 64, 64), method='linear', threashold=0
     vessel_mask = np.sum(interpolated_velocities**2, axis=-1) > threashold
     interpolated_velocities[vessel_mask == False] = 0
     return torch.Tensor(vessel_mask), torch.Tensor(interpolated_velocities)
+
+def normalize_point_cloud(data_points, fix_resizing_factor=True):
+    points_min = data_points.min(dim=0, keepdim=True)[0]
+    points_max = data_points.max(dim=0, keepdim=True)[0]
+
+    ranges = points_max - points_min
+    if fix_resizing_factor:
+        max_range = ranges.max()
+    else:
+        max_range = (data_points - points_min) / (points_max - points_min)
+    return (data_points - points_min) / max_range
+
+def check_points_in_hull(hull_tensor, check_tensor):
+    hull_points_np = hull_tensor.numpy()
+    check_points_np = check_tensor.numpy()
+    
+    hull = ConvexHull(hull_points_np)
+    
+    delaunay = Delaunay(hull_points_np[hull.vertices])
+    
+    inside = delaunay.find_simplex(check_points_np) >= 0
+    
+    inside_points = check_points_np[inside]
+    outside_points = check_points_np[~inside]
+    
+    inside_tensor = torch.from_numpy(inside_points)
+    outside_tensor = torch.from_numpy(outside_points)
+    
+    return inside_tensor, outside_tensor
+
+def reshape_tensor(tensor):
+    if tensor.dim() != 4:
+        raise ValueError("Input tensor must have 4 dimensions (d1, d2, d3, p)")
+    
+    d1, d2, d3, p = tensor.shape
+    new_shape = (d1 * d2 * d3, p)
+    
+    reshaped_tensor = tensor.view(new_shape)
+    
+    return reshaped_tensor
