@@ -4,6 +4,9 @@ import torch
 import numpy as np
 from scipy.interpolate import griddata
 from scipy.spatial import ConvexHull, Delaunay
+from tensorboard.backend.event_processing import event_accumulator
+import os
+import csv
 
 def square_distance(src, dst):
     """
@@ -167,11 +170,11 @@ def normalize_point_cloud(data_points, fix_resizing_factor=True):
     points_min = data_points.min(dim=0, keepdim=True)[0]
     points_max = data_points.max(dim=0, keepdim=True)[0]
 
-    ranges = points_max - points_min
     if fix_resizing_factor:
+        ranges = points_max - points_min
         max_range = ranges.max()
     else:
-        max_range = (data_points - points_min) / (points_max - points_min)
+        max_range = (points_max - points_min)
     return (data_points - points_min) / max_range
 
 def check_points_in_hull(hull_tensor, check_tensor):
@@ -202,3 +205,136 @@ def reshape_tensor(tensor):
     reshaped_tensor = tensor.view(new_shape)
     
     return reshaped_tensor
+
+
+def center_point_cloud_to_unit_cube(point_cloud):
+    centroid = point_cloud.mean(dim=0)
+    translated_points = point_cloud - centroid
+    
+    max_abs_val = torch.max(torch.abs(translated_points))
+    
+    scaled_points = translated_points / (2 * max_abs_val)
+    
+    centered_points = scaled_points + 0.5
+    return centered_points
+
+import torch.nn.functional as F
+
+def calculate_mse_accuracy(input_tensor, output_tensor):
+    mse_loss = F.mse_loss(input_tensor, output_tensor, reduction='mean')
+    return mse_loss.item()
+
+def calculate_angle_between_tensors(input_tensor, output_tensor):
+    # Normalize the input and output tensors to prevent division by zero
+    input_tensor_norm = input_tensor / (input_tensor.norm(dim=1, keepdim=True) + 1e-6)
+    output_tensor_norm = output_tensor / (output_tensor.norm(dim=1, keepdim=True) + 1e-6)
+    
+    # Calculate the dot product along the channel dimension
+    dot_product = (input_tensor_norm * output_tensor_norm).sum(dim=1)
+    
+    # Clamp the dot product values to be within the range [-1, 1] to avoid NaN errors in arccos
+    dot_product = torch.clamp(dot_product, -1.0, 1.0)
+    
+    # Calculate the angle in radians using arccos
+    angles = torch.acos(dot_product)
+    
+    return angles
+
+def calculate_difference_norm(input_tensor, output_tensor):
+    # Calculate the difference between the two tensors
+    difference = input_tensor - output_tensor
+    
+    # Calculate the norm of the difference at each point on the grid
+    difference_norms = difference.norm(dim=1)
+    
+    return difference_norms
+
+def load_tensorboard_data(log_dir, tag='val_loss_epoch'):
+    print("read metric from ", log_dir)
+
+    # Step 2: Use event_accumulator to load the data
+    ea = event_accumulator.EventAccumulator(log_dir,
+                                            size_guidance={ 
+                                                event_accumulator.SCALARS: 0,  # 0 means load all scalar events
+                                            })
+
+    ea.Reload()  # Loads events from file
+
+    # Example: Extract scalar data
+    scalar_tags = ea.Tags()['scalars']  # Get all tags of scalar data logged
+    #print(f"Available scalar tags: {scalar_tags}")
+
+    # Assuming you have a scalar tag named 'loss'
+    if tag in scalar_tags:
+        loss_values = ea.Scalars(tag)  # Get all events for the 'loss' tag
+        # Each event is a namedtuple with (wall_time, step, value)
+        loss_data = [event.value for event in loss_values]  # Extract loss values
+
+        return loss_data
+    else:
+        print("Tag not found in scalar tags.")
+        
+def add_metrics_to_result_file(data_dict):
+    file_path = get_project_root() / "results.csv"
+    file_exists = os.path.isfile(file_path)  # Check if file already exists
+    
+    with open(file_path, mode='a', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=data_dict.keys())
+        
+        if not file_exists:
+            writer.writeheader()  # Write header only if file didn't exist
+        
+        writer.writerow(data_dict)  # Write the data row
+        
+        
+def vector_field_to_points(vector_field, cube_size=128, threshold=0):
+    vel_points = reshape_tensor(vector_field.permute(1,2,3,0))
+    x = torch.arange(cube_size)
+    y = torch.arange(cube_size)
+    z = torch.arange(cube_size)
+
+    xx, yy, zz = torch.meshgrid(x, y, z, indexing='ij')
+
+    grid = torch.stack((xx, yy, zz), dim=-1).reshape(-1, 3)
+    
+    cond = torch.norm(vel_points, dim=1) > threshold
+    # (vel_points != 0).all(dim=1)
+
+    non_zero_vel_points = vel_points[cond]
+    non_zero_mask_points = grid[cond]
+
+    return non_zero_vel_points, non_zero_mask_points
+
+
+def rotate_vector_field(vector_field, angle, center=[0,0,0]):
+    """
+    Rotiert ein 3D-Vektorfeld um die Z-Achse um einen gegebenen Punkt.
+    
+    :param vector_field: Ein Array von Vektoren (x, y, z).
+    :param center: Der Punkt (x, y, z), um den rotiert wird.
+    :param angle: Der Rotationswinkel in Grad.
+    :return: Das rotierte Vektorfeld.
+    """
+    # Umrechnung des Winkels von Grad in Radiant
+    angle_rad = np.radians(angle)
+    
+    # Rotationsmatrix für die Z-Achse
+    rotation_matrix = np.array([[np.cos(angle_rad), -np.sin(angle_rad), 0],
+                                [np.sin(angle_rad), np.cos(angle_rad), 0],
+                                [0, 0, 1]])
+    
+    # Rotiertes Vektorfeld
+    rotated_field = np.zeros_like(vector_field)
+    
+    for i, vector in enumerate(vector_field):
+
+        # Verschiebung zum Ursprung
+        shifted_vector = vector - center
+        
+        # Anwendung der Rotation
+        rotated_vector = np.dot(rotation_matrix, shifted_vector)
+        
+        # Zurückverschiebung
+        rotated_field[i] = rotated_vector + center
+    
+    return rotated_field

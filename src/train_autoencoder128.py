@@ -5,18 +5,35 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import TQDMProgressBar
 import numpy as np
-from scipy.interpolate import griddata
 from torch.utils.data import DataLoader, Dataset
 import os
+import argparse
+import pprint
 
 import torch.nn as nn
 import torch.optim as optim
 import utils.helper_functions as hf
 import torch.nn.functional as F
 
+def get_args():
+    parser = argparse.ArgumentParser(description='Train Autoencoder')
+    parser.add_argument('--vector_input', action='store_true', help='Use vector input')
+    parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')
+    parser.add_argument('--job_id', type=int, default=0, help='SLURM job ID')
+    parser.add_argument('--num_epochs', type=int, default=100, help='Max number of epochs to train')
+    parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
 
-VECTOR_INPUT = True
-LEARNING_RATE = 1e-6
+    args = parser.parse_args()
+    return args
+
+if __name__ == "__main__":
+    args = get_args()
+
+    VECTOR_INPUT = args.vector_input
+    LEARNING_RATE = args.learning_rate
+else:
+    VECTOR_INPUT = True
+    LEARNING_RATE = 1e-6
 
 class VesselGrid(Dataset):
     def __init__(self, folder_path):
@@ -52,7 +69,9 @@ class VAE(pl.LightningModule):
         x = input_tensor
         
         # encoder
+        #print("input shape",x.shape)
         x = encoder(x)
+        #print("after encoder shape",x.shape)
         
         # add conditioning variables to feature vector
         conditioning_variables = torch.Tensor([])
@@ -61,6 +80,7 @@ class VAE(pl.LightningModule):
         x = torch.concat([self.flatten(x), conditioning_variables], axis=1)
         
         # put new feature vector through the after_cond_encoder
+        #print("x shape",x.shape)
         x = self.after_cond_encoder(x)
         
         # reparameterize
@@ -79,6 +99,7 @@ class VAE(pl.LightningModule):
         z = torch.reshape(z, (self.batch_size, 256, 8, 8, 8))
         
         # put new block shaped z through the decoder
+        #print("before",z.shape)
         z = F.interpolate(z, scale_factor=2, mode='trilinear', align_corners=False)
         z = decoder[0:3](z)
         z = decoder[3:6](z)
@@ -87,6 +108,7 @@ class VAE(pl.LightningModule):
         z = decoder[9:12](z)
         z = F.interpolate(z, scale_factor=2, mode='trilinear', align_corners=False)
         z = decoder[12:](z)
+        #print("after", z.shape)
         return z, mu, log_var
     
     def training_step(self, batch, batch_idx):    
@@ -127,6 +149,24 @@ class VAE(pl.LightningModule):
 
         return loss
     
+    def test_step(self, batch, batch_idx):
+        vessel_mask, interpolated_velocities = batch
+        
+        if VECTOR_INPUT:
+            x_hat, mu, log_var = self(interpolated_velocities)
+        else:
+            x_hat, mu, log_var = self(vessel_mask)
+
+        x_hat = x_hat * vessel_mask
+        
+        mse_accuracy = hf.calculate_mse_accuracy(x_hat, interpolated_velocities)
+        angle_accuracy = hf.calculate_angle_between_tensors(x_hat, interpolated_velocities)
+        norm_accuracy = hf.calculate_difference_norm(x_hat, interpolated_velocities)
+
+        self.log('mse_accuracy', mse_accuracy)
+        self.log('angle_accuracy', angle_accuracy.mean())
+        self.log('norm_accuracy', norm_accuracy.mean())
+    
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=LEARNING_RATE)
     
@@ -137,10 +177,13 @@ class VAE(pl.LightningModule):
         model.load_state_dict(checkpoint['state_dict'])
         return model
     
-encoder_input_size = 3 if VECTOR_INPUT else 1
+   
+encoder_input_size = 3 if VECTOR_INPUT else 1   
     
 encoder = nn.Sequential(
-    nn.Conv3d(encoder_input_size, 16, kernel_size=3, stride=2, padding=1),
+    nn.Conv3d(encoder_input_size, 3, kernel_size=3, stride=2, padding=1),
+    nn.ReLU(),
+    nn.Conv3d(3, 16, kernel_size=3, stride=2, padding=1),
     nn.ReLU(),
     nn.BatchNorm3d(16),
     nn.Conv3d(16, 32, kernel_size=3, stride=1, padding=1),
@@ -193,10 +236,15 @@ decoder = nn.Sequential(
     nn.BatchNorm3d(16),
     nn.ReLU(inplace=True),
     nn.Conv3d(16, 3, kernel_size=3, stride=1, padding=1),
-    nn.BatchNorm3d(3)
+    nn.BatchNorm3d(3),
+    nn.ReLU(inplace=True),
+    nn.ConvTranspose3d(3, 3, kernel_size=4, stride=2, padding=1),
+    nn.BatchNorm3d(3),
 )
 
 if __name__ == "__main__":
+    
+    torch.set_float32_matmul_precision('high')
 
     vae = VAE(
         encoder=encoder,
@@ -204,31 +252,76 @@ if __name__ == "__main__":
         after_cond_encoder=conditioning,
         pre_cond_decoder=conditioning2,
     )
-
-    DATA_DIR = hf.get_project_root() / "data" / "carotid_flow_database"
-    SAVE_DIR = hf.get_project_root() / "data" / "grid_vessel_data2"
     
-    dataset = VesselGrid(SAVE_DIR)
+    
+    DATA_ROOT_DIR = hf.get_project_root() / "data" 
+    DATA_DIR = "grid_vessel_data128_center"
+    
+    dataset = VesselGrid(DATA_ROOT_DIR / DATA_DIR)
 
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
-    train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=2)
-    val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
     
-    logger = TensorBoardLogger("./lightning_logs", name="autoencoder")
+    logger = TensorBoardLogger("./lightning_logs", name="autoencoder128")
     log_every = 50
     
-    print(f"Lerning rate: {LEARNING_RATE}")
     print(f"Model: {vae}")
-    print(f"Vector input: {VECTOR_INPUT}")
 
     trainer = pl.Trainer(
-        max_epochs=1000, 
+        max_epochs=args.num_epochs, 
         logger=logger, 
         log_every_n_steps=log_every, 
         callbacks=[TQDMProgressBar(refresh_rate=log_every)]
     )
 
     trainer.fit(vae, train_dataloader, val_dataloader)
+    
+    trainer.test(vae, val_dataloader)
+    
+    logging_path = hf.get_project_root() / "lightning_logs" / "autoencoder128" / f"version_{trainer.logger.version}"
+    
+    mse_acc = hf.load_tensorboard_data(str(logging_path), "mse_accuracy")
+    norm_acc = hf.load_tensorboard_data(str(logging_path), "norm_accuracy")
+    angle_acc = hf.load_tensorboard_data(str(logging_path), "angle_accuracy")
+    
+    # print(
+    #     args.job_id,
+    #     trainer.logger.version,
+    #     DATA_DIR,
+    #     VECTOR_INPUT,
+    #     trainer.max_epochs,
+    #     args.batch_size,
+    #     LEARNING_RATE,
+    #     mse_acc, 
+    #     norm_acc, 
+    #     angle_acc, 
+    #     sep='\n'
+    # )
+    
+    print("##################################################")
+    print("##################################################")
+    print()
+    print("#### METRICS ####")
+    
+    metrics = {
+        'SlurmID': args.job_id,
+        'LoggingVersion': trainer.logger.version,
+        'DataPath': str(DATA_DIR),
+        'isVectorInput': VECTOR_INPUT,
+        'NumEpochs': args.num_epochs,
+        'BatchSize': args.batch_size,
+        'LearningRate': LEARNING_RATE,
+        'MSEAccuracy': mse_acc[0],
+        'AverageNormDifference': norm_acc[0],
+        'AverageAngleDifference': angle_acc[0]
+    }
+    
+    pprint.pprint(metrics)
+    
+    print("Write metrics into results.csv")
+    
+    hf.add_metrics_to_result_file(metrics)
