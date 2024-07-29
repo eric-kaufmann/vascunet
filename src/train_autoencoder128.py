@@ -18,6 +18,7 @@ import torch.nn.functional as F
 def get_args():
     parser = argparse.ArgumentParser(description='Train Autoencoder')
     parser.add_argument('--vector_input', action='store_true', help='Use vector input')
+    parser.add_argument('--add_metadata', action='store_true', help='Use vector input')
     parser.add_argument('--learning_rate', type=float, default=1e-6, help='Learning rate')
     parser.add_argument('--job_id', type=int, default=0, help='SLURM job ID')
     parser.add_argument('--num_epochs', type=int, default=100, help='Max number of epochs to train')
@@ -31,23 +32,46 @@ if __name__ == "__main__":
 
     VECTOR_INPUT = args.vector_input
     LEARNING_RATE = args.learning_rate
+    ADD_METADATA = args.add_metadata
+    METADATA_SIZE = 18
+    
 else:
     VECTOR_INPUT = True
     LEARNING_RATE = 1e-6
+    ADD_METADATA = True
+    METADATA_SIZE = 18
+    
+METADATA_PATH = "/home/ne34gux/workspace/vascunet/data/grid_vessel_metadata"
 
 class VesselGrid(Dataset):
-    def __init__(self, folder_path):
+    def __init__(self, folder_path, add_metadata=False):
         super(VesselGrid, self).__init__()
         self.file_paths = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.npz')]
+        self.add_metadata = add_metadata
+        if add_metadata:
+            self.metadata_file_paths = [os.path.join(METADATA_PATH, f) for f in os.listdir(METADATA_PATH) if f.endswith('.npz')]
 
     def __len__(self):
         return len(self.file_paths)
 
     def __getitem__(self, idx):
-        data = np.load(self.file_paths[idx])
+        data_file_path = self.file_paths[idx]
+        data = np.load(data_file_path)
         vessel_mask = torch.from_numpy(data['vessel_mask']).float()
         interpolated_velocities = torch.from_numpy(data['interpolated_velocities']).float().permute(3, 0, 1, 2)
-        return vessel_mask.unsqueeze(0), interpolated_velocities
+        
+        if self.add_metadata:
+            vessel_name = data_file_path.split('_angle_')[0][-10:]
+            metadata = np.load(os.path.join(METADATA_PATH, vessel_name+'.npz'))
+            metadata_tensor = torch.concatenate([
+                torch.from_numpy(metadata['dimension_min']),
+                torch.from_numpy(metadata['dimension_max']),
+                torch.from_numpy(metadata['eigenvectors']).flatten(),
+                torch.from_numpy(metadata['eigenvalues']),
+            ])
+            return vessel_mask.unsqueeze(0), interpolated_velocities, metadata_tensor.float()
+        else:
+            return vessel_mask.unsqueeze(0), interpolated_velocities
 
 
 class VAE(pl.LightningModule):
@@ -59,28 +83,21 @@ class VAE(pl.LightningModule):
         self.pre_cond_decoder = pre_cond_decoder
         self.batch_size = batch_size
         
-        self.loss_fn = nn.MSELoss(reduction='sum')
+        self.loss_fn = nn.MSELoss(reduction='mean')
         self.flatten = nn.Flatten()
     
-    def calculate_conditional_variables(self, input_tensor):
-        return torch.Tensor([])
-    
-    def forward(self, input_tensor):   
+    def forward(self, input_tensor, metadata=None):   
         x = input_tensor
         
-        # encoder
-        #print("input shape",x.shape)
         x = encoder(x)
-        #print("after encoder shape",x.shape)
         
-        # add conditioning variables to feature vector
-        conditioning_variables = torch.Tensor([])
-        conditioning_variables = conditioning_variables.to(input_tensor.device)
+        if ADD_METADATA:
+            conditioning_variables = torch.Tensor(metadata)
+        else:
+            conditioning_variables = torch.Tensor([])
 
-        x = torch.concat([self.flatten(x), conditioning_variables], axis=1)
+        x = torch.concatenate([self.flatten(x), conditioning_variables], axis=1)
         
-        # put new feature vector through the after_cond_encoder
-        #print("x shape",x.shape)
         x = self.after_cond_encoder(x)
         
         # reparameterize
@@ -111,51 +128,73 @@ class VAE(pl.LightningModule):
         #print("after", z.shape)
         return z, mu, log_var
     
-    def training_step(self, batch, batch_idx):    
-        vessel_mask, interpolated_velocities = batch
+    def training_step(self, batch, batch_idx):
+        if ADD_METADATA:
+            vessel_mask, interpolated_velocities, metadata = batch
+        else:
+            vessel_mask, interpolated_velocities = batch
+            metadata = None
 
         if VECTOR_INPUT:
-            x_hat, mu, log_var = self(interpolated_velocities)
+            x_hat, mu, log_var = self(interpolated_velocities, metadata=metadata)
         else:
-            x_hat, mu, log_var = self(vessel_mask)
-
+            x_hat, mu, log_var = self(vessel_mask, metadata=metadata)
+            
         x_hat = x_hat * vessel_mask
+        interpolated_velocities = interpolated_velocities * vessel_mask
+        #x_hat = torch.where(torch.isnan(x_hat), torch.zeros_like(x_hat), x_hat)
+        
         recon_loss = self.loss_fn(x_hat, interpolated_velocities)
         kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        loss = recon_loss + kl_loss
+        angle_loss = torch.nanmean(hf.calculate_angle_between_tensors(x_hat, interpolated_velocities))
+        #print(angle_loss, x_hat.shape, interpolated_velocities.shape, hf.calculate_angle_between_tensors(x_hat, interpolated_velocities).shape)
+        
+        loss = recon_loss + kl_loss + angle_loss
         
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log('recon_loss', recon_loss)
-        self.log('kl_loss', kl_loss)
+        self.log('train_recon_loss', recon_loss)
+        self.log('train_kl_loss', kl_loss)
+        self.log('train_angle_loss', angle_loss)
         
         return loss
     
     def validation_step(self, batch, batch_idx):
-        vessel_mask, interpolated_velocities = batch
-        
-        if VECTOR_INPUT:
-            x_hat, mu, log_var = self(interpolated_velocities)
+        if ADD_METADATA:
+            vessel_mask, interpolated_velocities, metadata = batch
         else:
-            x_hat, mu, log_var = self(vessel_mask)
+            vessel_mask, interpolated_velocities = batch
+            metadata = None
 
+        if VECTOR_INPUT:
+            x_hat, mu, log_var = self(interpolated_velocities, metadata=metadata)
+        else:
+            x_hat, mu, log_var = self(vessel_mask, metadata=metadata)
+            
         x_hat = x_hat * vessel_mask
         recon_loss = self.loss_fn(x_hat, interpolated_velocities)
         kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        loss = recon_loss + kl_loss
-
+        angle_loss = torch.nanmean(hf.calculate_angle_between_tensors(x_hat, interpolated_velocities))
+        
+        loss = recon_loss + kl_loss + angle_loss
+        
         self.log('val_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_recon_loss', recon_loss)
         self.log('val_kl_loss', kl_loss)
+        self.log('val_angle_loss', angle_loss)
 
         return loss
     
     def test_step(self, batch, batch_idx):
-        vessel_mask, interpolated_velocities = batch
+        if ADD_METADATA:
+            vessel_mask, interpolated_velocities, metadata = batch
+        else:
+            vessel_mask, interpolated_velocities = batch
+            metadata = None
         
         if VECTOR_INPUT:
-            x_hat, mu, log_var = self(interpolated_velocities)
+            x_hat, mu, log_var = self(interpolated_velocities, metadata=metadata)
         else:
-            x_hat, mu, log_var = self(vessel_mask)
+            x_hat, mu, log_var = self(vessel_mask, metadata=metadata)
 
         x_hat = x_hat * vessel_mask
         
@@ -206,13 +245,15 @@ encoder = nn.Sequential(
     nn.BatchNorm3d(256),
 )
 
+metadata_vector_size = METADATA_SIZE if ADD_METADATA else 0
+
 conditioning = nn.Sequential(
-    nn.Linear(131072, 20),
+    nn.Linear(131072+metadata_vector_size, 20),
     nn.ReLU()
 )
 
 conditioning2 = nn.Sequential(
-    nn.Linear(10, 131072),
+    nn.Linear(10+metadata_vector_size, 131072),
     nn.ReLU()
 )
 
@@ -244,7 +285,7 @@ decoder = nn.Sequential(
 
 if __name__ == "__main__":
     
-    torch.set_float32_matmul_precision('high')
+    torch.set_float32_matmul_precision('medium')
 
     vae = VAE(
         encoder=encoder,
@@ -257,7 +298,7 @@ if __name__ == "__main__":
     DATA_ROOT_DIR = hf.get_project_root() / "data" 
     DATA_DIR = "grid_vessel_data128_center"
     
-    dataset = VesselGrid(DATA_ROOT_DIR / DATA_DIR)
+    dataset = VesselGrid(DATA_ROOT_DIR / DATA_DIR, add_metadata=ADD_METADATA)
 
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
@@ -267,7 +308,7 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
     
     logger = TensorBoardLogger("./lightning_logs", name="autoencoder128")
-    log_every = 50
+    log_every = 1
     
     print(f"Model: {vae}")
 
@@ -287,20 +328,6 @@ if __name__ == "__main__":
     mse_acc = hf.load_tensorboard_data(str(logging_path), "mse_accuracy")
     norm_acc = hf.load_tensorboard_data(str(logging_path), "norm_accuracy")
     angle_acc = hf.load_tensorboard_data(str(logging_path), "angle_accuracy")
-    
-    # print(
-    #     args.job_id,
-    #     trainer.logger.version,
-    #     DATA_DIR,
-    #     VECTOR_INPUT,
-    #     trainer.max_epochs,
-    #     args.batch_size,
-    #     LEARNING_RATE,
-    #     mse_acc, 
-    #     norm_acc, 
-    #     angle_acc, 
-    #     sep='\n'
-    # )
     
     print("##################################################")
     print("##################################################")
