@@ -7,6 +7,8 @@ from scipy.spatial import ConvexHull, Delaunay
 from tensorboard.backend.event_processing import event_accumulator
 import os
 import csv
+import torch.nn.functional as F
+import torch
 
 def square_distance(src, dst):
     """
@@ -218,8 +220,6 @@ def center_point_cloud_to_unit_cube(point_cloud):
     centered_points = scaled_points + 0.5
     return centered_points
 
-import torch.nn.functional as F
-
 def calculate_mse_accuracy(input_tensor, output_tensor):
     mse_loss = F.mse_loss(input_tensor, output_tensor, reduction='mean')
     return mse_loss.item()
@@ -338,3 +338,41 @@ def rotate_vector_field(vector_field, angle, center=[0,0,0]):
         rotated_field[i] = rotated_vector + center
     
     return rotated_field
+
+def calculate_angles_from_grid(vector_field1, vector_field2):
+    """
+    Calculate the angles between corresponding vectors in two 3D vector fields.
+
+    Args:
+        vector_field1 (torch.Tensor): First vector field with shape (3, 128, 128, 128).
+        vector_field2 (torch.Tensor): Second vector field with shape (3, 128, 128, 128).
+
+    Returns:
+        torch.Tensor: A single value representing the sum of angles between corresponding vectors.
+    """
+    # Ensure the input tensors are of type float32
+    vector_field1 = vector_field1.float()
+    vector_field2 = vector_field2.float()
+
+    # Calculate the dot product between corresponding vectors
+    dot_product = torch.sum(vector_field1 * vector_field2, dim=0)
+
+    # Calculate the magnitudes of the vectors
+    magnitude1 = torch.sqrt(torch.sum(vector_field1 ** 2, dim=0))
+    magnitude2 = torch.sqrt(torch.sum(vector_field2 ** 2, dim=0))
+
+    # Avoid division by zero by adding a small epsilon to the magnitudes
+    epsilon = 1e-8
+    magnitude1 = torch.clamp(magnitude1, min=epsilon)
+    magnitude2 = torch.clamp(magnitude2, min=epsilon)
+
+    # Calculate the cosine of the angles
+    cos_theta = dot_product / (magnitude1 * magnitude2)
+
+    # Clamp the values of cos_theta to the range [-1, 1] to avoid NaNs in acos
+    cos_theta = torch.clamp(cos_theta, -1.0, 1.0)
+
+    # Calculate the angles in radians
+    angles = torch.acos(cos_theta)
+
+    return angles
