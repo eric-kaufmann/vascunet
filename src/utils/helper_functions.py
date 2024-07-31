@@ -339,32 +339,32 @@ def rotate_vector_field(vector_field, angle, center=[0,0,0]):
     
     return rotated_field
 
-def calculate_angles_from_grid(vector_field1, vector_field2):
+def calculate_angles_from_grid(vector_field1, vector_field2, deg_output=False):
     """
     Calculate the angles between corresponding vectors in two 3D vector fields.
 
     Args:
-        vector_field1 (torch.Tensor): First vector field with shape (3, 128, 128, 128).
-        vector_field2 (torch.Tensor): Second vector field with shape (3, 128, 128, 128).
+        vector_field1 (torch.Tensor): First vector field with shape (batch_size, 3, 128, 128, 128).
+        vector_field2 (torch.Tensor): Second vector field with shape (batch_size, 3, 128, 128, 128).
 
     Returns:
-        torch.Tensor: A single value representing the sum of angles between corresponding vectors.
+        torch.Tensor: angles between corresponding vectors.
     """
-    # Ensure the input tensors are of type float32
+     # Ensure the input tensors are of type float32
     vector_field1 = vector_field1.float()
     vector_field2 = vector_field2.float()
 
     # Calculate the dot product between corresponding vectors
-    dot_product = torch.sum(vector_field1 * vector_field2, dim=0)
+    dot_product = torch.sum(vector_field1 * vector_field2, dim=1)
 
     # Calculate the magnitudes of the vectors
-    magnitude1 = torch.sqrt(torch.sum(vector_field1 ** 2, dim=0))
-    magnitude2 = torch.sqrt(torch.sum(vector_field2 ** 2, dim=0))
+    magnitude1 = torch.sqrt(torch.sum(vector_field1 ** 2, dim=1))
+    magnitude2 = torch.sqrt(torch.sum(vector_field2 ** 2, dim=1))
 
     # Avoid division by zero by adding a small epsilon to the magnitudes
     epsilon = 1e-8
-    magnitude1 = torch.clamp(magnitude1, min=epsilon)
-    magnitude2 = torch.clamp(magnitude2, min=epsilon)
+    #magnitude1 = torch.clamp(magnitude1, min=epsilon)
+    #magnitude2 = torch.clamp(magnitude2, min=epsilon)
 
     # Calculate the cosine of the angles
     cos_theta = dot_product / (magnitude1 * magnitude2)
@@ -374,5 +374,13 @@ def calculate_angles_from_grid(vector_field1, vector_field2):
 
     # Calculate the angles in radians
     angles = torch.acos(cos_theta)
+
+    # Handle the case where both vectors are zero
+    zero_mask = (magnitude1 < epsilon) & (magnitude2 < epsilon)
+    angles[zero_mask] = 0.0
+
+    if deg_output:
+        # Convert angles to degrees
+        angles = torch.rad2deg(angles)
 
     return angles
