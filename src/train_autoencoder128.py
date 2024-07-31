@@ -23,6 +23,7 @@ def get_args():
     parser.add_argument('--job_id', type=int, default=0, help='SLURM job ID')
     parser.add_argument('--num_epochs', type=int, default=100, help='Max number of epochs to train')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
+    parser.add_argument('--log_every', type=int, default=100, help='Log every n steps')
 
     args = parser.parse_args()
     return args
@@ -142,19 +143,31 @@ class VAE(pl.LightningModule):
             
         x_hat = x_hat * vessel_mask
         interpolated_velocities = interpolated_velocities * vessel_mask
-        #x_hat = torch.where(torch.isnan(x_hat), torch.zeros_like(x_hat), x_hat)
+        # if torch.isnan(x_hat).any():
+        #     print("x_hat contains NaNs")
         
+        angle_loss = torch.mean(hf.calculate_angles_from_grid(x_hat, interpolated_velocities))
         recon_loss = self.loss_fn(x_hat, interpolated_velocities)
         kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        angle_loss = torch.nanmean(hf.calculate_angle_between_tensors(x_hat, interpolated_velocities))
+        # print(f"angle_loss: {angle_loss}")
+        # print(f"recon_loss: {recon_loss}")
+        # print(f"kl_loss: {kl_loss}")
+        # # Debugging: Check for NaNs in angle_loss
+        # if torch.isnan(angle_loss).any():
+        #     print("NaN detected in angle_loss")
+        #     print(f"x_hat has NAN?: {torch.isnan(x_hat).any()}")
+        #     print(f"interpolated_velocities has NAN?: {torch.isnan(interpolated_velocities).any()}")
+        #     print(f"angle_loss has NAN?: {torch.isnan(angle_loss).any()}")
+        #     exit()
+            
         #print(angle_loss, x_hat.shape, interpolated_velocities.shape, hf.calculate_angle_between_tensors(x_hat, interpolated_velocities).shape)
         
-        loss = recon_loss + kl_loss + angle_loss
+        loss = recon_loss + kl_loss + angle_loss.item()
         
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('train_recon_loss', recon_loss)
         self.log('train_kl_loss', kl_loss)
-        self.log('train_angle_loss', angle_loss)
+        self.log('train_angle_loss', angle_loss.item())
         
         return loss
     
@@ -171,16 +184,17 @@ class VAE(pl.LightningModule):
             x_hat, mu, log_var = self(vessel_mask, metadata=metadata)
             
         x_hat = x_hat * vessel_mask
+        
+        angle_loss = torch.mean(hf.calculate_angles_from_grid(x_hat, interpolated_velocities))
         recon_loss = self.loss_fn(x_hat, interpolated_velocities)
         kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        angle_loss = torch.nanmean(hf.calculate_angle_between_tensors(x_hat, interpolated_velocities))
         
-        loss = recon_loss + kl_loss + angle_loss
+        loss = recon_loss + kl_loss + angle_loss.item()
         
         self.log('val_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_recon_loss', recon_loss)
         self.log('val_kl_loss', kl_loss)
-        self.log('val_angle_loss', angle_loss)
+        self.log('val_angle_loss', angle_loss.item())
 
         return loss
     
@@ -199,7 +213,7 @@ class VAE(pl.LightningModule):
         x_hat = x_hat * vessel_mask
         
         mse_accuracy = hf.calculate_mse_accuracy(x_hat, interpolated_velocities)
-        angle_accuracy = hf.calculate_angle_between_tensors(x_hat, interpolated_velocities)
+        angle_accuracy = hf.calculate_angles_from_grid(x_hat, interpolated_velocities, deg_output=True)
         norm_accuracy = hf.calculate_difference_norm(x_hat, interpolated_velocities)
 
         self.log('mse_accuracy', mse_accuracy)
@@ -308,15 +322,14 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
     
     logger = TensorBoardLogger("./lightning_logs", name="autoencoder128")
-    log_every = 1
     
     print(f"Model: {vae}")
 
     trainer = pl.Trainer(
         max_epochs=args.num_epochs, 
         logger=logger, 
-        log_every_n_steps=log_every, 
-        callbacks=[TQDMProgressBar(refresh_rate=log_every)]
+        log_every_n_steps=args.log_every, 
+        callbacks=[TQDMProgressBar(refresh_rate=args.log_every)]
     )
 
     trainer.fit(vae, train_dataloader, val_dataloader)
